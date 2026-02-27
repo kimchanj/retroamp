@@ -23,6 +23,7 @@
 - ⏱ Current time / total duration display
 - 📂 File open dialog (load local MP3)
 - 🖥 Desktop app (Electron)
+- https://skins.webamp.org/
 
 ---
 
