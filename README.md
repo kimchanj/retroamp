@@ -11,7 +11,8 @@
   <img src="docs/images/demo.gif" width="520" />
 </p>
 
-Winamp-inspired retro MP3 player built with **Electron + Vite + React + TypeScript**.
+▶ Demo: Open file → Play → Seek → Volume control <p/>
+   Winamp-inspired retro MP3 player built with **Electron + Vite + React + TypeScript**.
 
 ---
 
