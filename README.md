@@ -8,7 +8,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 <p align="left">
-  <img src="docs/images/retroamp-ui.png" width="630" />
+  <img src="docs/images/demo.gif" width="520" />
 </p>
 
 Winamp-inspired retro MP3 player built with **Electron + Vite + React + TypeScript**.
