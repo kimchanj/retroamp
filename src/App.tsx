@@ -1,189 +1,308 @@
-import { useEffect, useRef, useState } from "react"
-import "./App.css"
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import './App.css';
+
+type Track = {
+  id: string;
+  name: string;
+  src: string;
+};
+
+function basename(filePath: string) {
+  const parts = filePath.split(/[/\\]/);
+  return parts[parts.length - 1] || filePath;
+}
+
+function toFileUrl(filePath: string) {
+  if (!filePath) return '';
+  if (filePath.startsWith('file://')) return filePath;
+  let normalized = filePath.replace(/\\/g, '/');
+  if (/^[A-Za-z]:\//.test(normalized)) normalized = `/${normalized}`;
+  return encodeURI(`file://${normalized}`);
+}
+
+function fmtTime(sec: number) {
+  if (!Number.isFinite(sec) || sec <= 0) return '00:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
 
 export default function App() {
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const visTimerRef = useRef<number | null>(null)
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [playlist, setPlaylist] = useState<Track[]>([]);
+  const [currentIndex, setCurrentIndex] = useState(-1);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(0.8);
+  const [showPlaylist, setShowPlaylist] = useState(true);
 
-  const [playing, setPlaying] = useState(false)
-  const [currentTime, setCurrentTime] = useState(0)
-  const [duration, setDuration] = useState(0)
-  const [fileName, setFileName] = useState("No Track Loaded")
-  const [volume, setVolume] = useState(0.7)
-  const [bars, setBars] = useState<number[]>([10, 30, 15, 50, 20, 45, 12, 35, 25, 40])
+  const currentTrack = useMemo(() => playlist[currentIndex] ?? null, [playlist, currentIndex]);
+
+  const selectTrack = useCallback(
+    async (idx: number, opts?: { autoplay?: boolean }) => {
+      const a = audioRef.current;
+      const t = playlist[idx];
+      if (!a || !t) return;
+
+      setCurrentIndex(idx);
+      setCurrentTime(0);
+      setDuration(0);
+      a.src = t.src;
+
+      if (opts?.autoplay) {
+        try {
+          await a.play();
+        } catch {
+          // ignore
+        }
+      }
+    },
+    [playlist],
+  );
 
   useEffect(() => {
-    const audio = audioRef.current
-    if (!audio) return
+    const a = audioRef.current;
+    if (!a) return;
+    a.volume = volume;
 
-    const updateTime = () => setCurrentTime(audio.currentTime)
-    const loaded = () => setDuration(audio.duration || 0)
+    const onTime = () => setCurrentTime(a.currentTime || 0);
+    const onMeta = () => setDuration(a.duration || 0);
+    const onPlay = () => setIsPlaying(true);
+    const onPause = () => setIsPlaying(false);
+    const onEnded = () => {
+      if (playlist.length === 0) return;
+      if (currentIndex < 0) return;
+      const next = currentIndex + 1;
+      if (next < playlist.length) {
+        void selectTrack(next, { autoplay: true });
+      } else {
+        setIsPlaying(false);
+      }
+    };
 
-    audio.addEventListener("timeupdate", updateTime)
-    audio.addEventListener("loadedmetadata", loaded)
+    a.addEventListener('timeupdate', onTime);
+    a.addEventListener('loadedmetadata', onMeta);
+    a.addEventListener('play', onPlay);
+    a.addEventListener('pause', onPause);
+    a.addEventListener('ended', onEnded);
 
     return () => {
-      audio.removeEventListener("timeupdate", updateTime)
-      audio.removeEventListener("loadedmetadata", loaded)
+      a.removeEventListener('timeupdate', onTime);
+      a.removeEventListener('loadedmetadata', onMeta);
+      a.removeEventListener('play', onPlay);
+      a.removeEventListener('pause', onPause);
+      a.removeEventListener('ended', onEnded);
+    };
+  }, [playlist, currentIndex, volume, selectTrack]);
+
+  const addTracks = (tracks: Track[]) => {
+    if (tracks.length === 0) return;
+    setPlaylist((prev) => [...prev, ...tracks]);
+    setShowPlaylist(true);
+  };
+
+  const addTracksFromPaths = (paths: string[]) => {
+    if (paths.length === 0) return;
+    const timestamp = Date.now();
+    const tracks: Track[] = paths.map((p, i) => ({
+      id: `${timestamp}-${i}`,
+      name: basename(p),
+      src: toFileUrl(p),
+    }));
+    addTracks(tracks);
+  };
+
+  const addTracksFromFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const timestamp = Date.now();
+    const tracks: Track[] = Array.from(files).map((file, i) => ({
+      id: `${timestamp}-local-${i}`,
+      name: file.name,
+      src: URL.createObjectURL(file),
+    }));
+    addTracks(tracks);
+  };
+
+  const openFiles = async () => {
+    try {
+      const paths = (await window.retroamp?.openAudioFiles?.()) ?? [];
+      if (paths.length > 0) {
+        addTracksFromPaths(paths);
+        return;
+      }
+    } catch {
+      // fallback to local file input
     }
-  }, [])
 
-  useEffect(() => {
-    if (audioRef.current) audioRef.current.volume = volume
-  }, [volume])
+    fileInputRef.current?.click();
+  };
 
-  // 재생중일 때만 "가짜" 비주얼라이저 움직이기
-  useEffect(() => {
-    if (visTimerRef.current) {
-      window.clearInterval(visTimerRef.current)
-      visTimerRef.current = null
+  const play = async () => {
+    const a = audioRef.current;
+    if (!a) return;
+
+    if (!currentTrack && playlist.length > 0) {
+      await selectTrack(0, { autoplay: true });
+      return;
     }
-
-    if (playing) {
-      visTimerRef.current = window.setInterval(() => {
-        setBars((prev) => prev.map(() => 8 + Math.floor(Math.random() * 55)))
-      }, 120)
-    } else {
-      // 멈추면 살짝 내려가게
-      setBars((prev) => prev.map((v) => Math.max(8, Math.floor(v * 0.5))))
-    }
-
-    return () => {
-      if (visTimerRef.current) window.clearInterval(visTimerRef.current)
-    }
-  }, [playing])
-
-  const formatTime = (t: number) => {
-    const m = Math.floor(t / 60)
-    const s = Math.floor(t % 60)
-    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`
-  }
-
-  const togglePlay = async () => {
-    const audio = audioRef.current
-    if (!audio) return
 
     try {
-      if (playing) {
-        audio.pause()
-        setPlaying(false)
-      } else {
-        await audio.play()
-        setPlaying(true)
-      }
-    } catch (e) {
-      console.error(e)
-      setPlaying(false)
+      await a.play();
+    } catch {
+      // ignore
     }
-  }
+  };
+
+  const pause = () => audioRef.current?.pause();
 
   const stop = () => {
-    const audio = audioRef.current
-    if (!audio) return
-    audio.pause()
-    audio.currentTime = 0
-    setCurrentTime(0)
-    setPlaying(false)
-  }
+    const a = audioRef.current;
+    if (!a) return;
+    a.pause();
+    a.currentTime = 0;
+    setCurrentTime(0);
+    setIsPlaying(false);
+  };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0]
-    if (!file) return
+  const prev = async () => {
+    if (playlist.length === 0) return;
+    const idx = currentIndex <= 0 ? 0 : currentIndex - 1;
+    await selectTrack(idx, { autoplay: true });
+  };
 
-    const url = URL.createObjectURL(file)
-    const audio = audioRef.current
-    if (!audio) return
+  const next = async () => {
+    if (playlist.length === 0) return;
+    const idx = currentIndex < 0 ? 0 : Math.min(currentIndex + 1, playlist.length - 1);
+    await selectTrack(idx, { autoplay: true });
+  };
 
-    audio.src = url
-    audio.currentTime = 0
-    setCurrentTime(0)
-    setDuration(0)
-    setFileName(file.name)
-    setPlaying(false)
-  }
+  const seek = (v: number) => {
+    const a = audioRef.current;
+    if (!a) return;
+    a.currentTime = v;
+    setCurrentTime(v);
+  };
 
-  const openFilePicker = () => {
-    ;(document.getElementById("fileInput") as HTMLInputElement | null)?.click()
-  }
-
-  const seek = (value: number) => {
-    const audio = audioRef.current
-    if (!audio) return
-    audio.currentTime = value
-    setCurrentTime(value)
-  }
+  const setVol = (v: number) => {
+    const a = audioRef.current;
+    const nextVolume = Math.max(0, Math.min(1, v));
+    setVolume(nextVolume);
+    if (a) a.volume = nextVolume;
+  };
 
   return (
     <div className="player">
-      {/* 드래그 가능한 상단바 */}
       <div className="titlebar-drag">
         <div>RETROAMP</div>
         <div className="winbtns">
-          {/* 나중에 minimize/close IPC 붙일 자리 */}
-          <div className="winbtn" title="minimize" />
-          <div className="winbtn" title="close" />
+          <div className="winbtn" />
+          <div className="winbtn" />
         </div>
       </div>
 
       <div className="mainRow">
-        <div className="visualizer">
-          {bars.map((h, i) => (
-            <div key={i} className="bar" style={{ height: `${h}px` }} />
+        <div className="visualizer" aria-hidden>
+          {Array.from({ length: 10 }).map((_, i) => (
+            <div key={i} className="bar" style={{ height: `${10 + ((i * 13) % 45)}px`, opacity: 0.25 }} />
           ))}
         </div>
 
         <div className="display">
-          <div className="song">{fileName}</div>
+          <div className="song">{currentTrack ? currentTrack.name : 'No Track Loaded'}</div>
           <div className="time">
-            {formatTime(currentTime)} / {formatTime(duration)}
+            {fmtTime(currentTime)} / {fmtTime(duration)}
           </div>
         </div>
       </div>
 
       <div className="sliders">
         <div className="sliderRow">
-          <span>POS</span>
+          <span className="label">POS</span>
           <input
+            className="range"
             type="range"
-            min="0"
-            max={duration || 0}
-            step="0.1"
-            value={currentTime}
-            onChange={(e) => seek(parseFloat(e.target.value))}
+            min={0}
+            max={Math.max(0, duration)}
+            step={0.1}
+            value={Math.min(currentTime, duration || 0)}
+            onChange={(e) => seek(Number(e.target.value))}
           />
         </div>
 
         <div className="sliderRow">
-          <span>VOL</span>
+          <span className="label">VOL</span>
           <input
+            className="range"
             type="range"
-            min="0"
-            max="1"
-            step="0.01"
+            min={0}
+            max={1}
+            step={0.01}
             value={volume}
-            onChange={(e) => setVolume(parseFloat(e.target.value))}
+            onChange={(e) => setVol(Number(e.target.value))}
           />
         </div>
       </div>
 
       <div className="controls">
-        <button title="Prev" onClick={() => {}}>⏮</button>
-        <button title="Play/Pause" onClick={togglePlay}>{playing ? "⏸" : "▶"}</button>
-        <button title="Stop" onClick={stop}>⏹</button>
-        <button title="Next" onClick={() => {}}>⏭</button>
-        <button title="Open" onClick={openFilePicker}>OPEN</button>
-        <button title="Playlist" onClick={() => alert("Playlist next!")}>PL</button>
-
-        <input
-          id="fileInput"
-          className="fileInput"
-          type="file"
-          accept="audio/*"
-          onChange={handleFileChange}
-        />
+        <button onClick={() => void prev()} title="Prev">
+          PREV
+        </button>
+        <button onClick={() => (isPlaying ? pause() : void play())} title={isPlaying ? 'Pause' : 'Play'}>
+          {isPlaying ? 'PAUSE' : 'PLAY'}
+        </button>
+        <button onClick={stop} title="Stop">
+          STOP
+        </button>
+        <button onClick={() => void next()} title="Next">
+          NEXT
+        </button>
+        <button onClick={() => void openFiles()} title="Open files">
+          OPEN
+        </button>
+        <button onClick={() => setShowPlaylist((v) => !v)} title="Playlist">
+          PL
+        </button>
       </div>
+
+      <input
+        ref={fileInputRef}
+        className="fileInput"
+        type="file"
+        accept="audio/*"
+        multiple
+        onChange={(e) => {
+          addTracksFromFiles(e.target.files);
+          e.currentTarget.value = '';
+        }}
+      />
+
+      {showPlaylist && (
+        <div className="playlistPanel">
+          <div className="playlistBody">
+            {playlist.length === 0 ? (
+              <div className="playlistEmpty">No tracks</div>
+            ) : (
+              playlist.map((t, idx) => (
+                <div
+                  key={t.id}
+                  className={idx === currentIndex ? 'playlistItem active' : 'playlistItem'}
+                  onDoubleClick={() => void selectTrack(idx, { autoplay: true })}
+                >
+                  <span className="playlistIdx">{String(idx + 1).padStart(2, '0')}</span>
+                  <span className="playlistName" title={t.name}>
+                    {t.name}
+                  </span>
+                </div>
+              ))
+            )}
+          </div>
+          <div className="playlistHint">Double click a track to play</div>
+        </div>
+      )}
 
       <audio ref={audioRef} />
     </div>
-  )
+  );
 }
