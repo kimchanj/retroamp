@@ -30,7 +30,7 @@ function createWindow() {
   win = new BrowserWindow({
     useContentSize: true,
     width: WINDOW_WIDTH,
-    height: WINDOW_HEIGHT_EXPANDED,
+    height: WINDOW_HEIGHT_COLLAPSED,
     minWidth: WINDOW_WIDTH,
     maxWidth: WINDOW_WIDTH,
     minHeight: WINDOW_HEIGHT_COLLAPSED,

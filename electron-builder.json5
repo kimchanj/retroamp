@@ -3,6 +3,11 @@
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
   "appId": "com.kimchanj.retroamp",
   "asar": true,
+  "compression": "maximum",
+  "electronLanguages": [
+    "en-US",
+    "ko"
+  ],
   "productName": "RetroAmp",
   "directories": {
     "output": "release/${version}"

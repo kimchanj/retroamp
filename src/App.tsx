@@ -261,6 +261,55 @@ export default function App() {
     if (a) a.volume = nextVolume;
   };
 
+  const removeTrack = (idx: number) => {
+    if (idx < 0 || idx >= playlist.length) return;
+
+    const a = audioRef.current;
+    const wasPlaying = isPlaying;
+    const nextList = playlist.filter((_, i) => i !== idx);
+
+    setPlaylist(nextList);
+
+    if (nextList.length === 0) {
+      if (a) {
+        a.pause();
+        a.src = '';
+      }
+      setCurrentIndex(-1);
+      setCurrentTime(0);
+      setDuration(0);
+      setIsPlaying(false);
+      return;
+    }
+
+    if (idx < currentIndex) {
+      setCurrentIndex(currentIndex - 1);
+      return;
+    }
+
+    if (idx > currentIndex) {
+      return;
+    }
+
+    const nextIndex = Math.min(idx, nextList.length - 1);
+    const nextTrack = nextList[nextIndex];
+    if (a && nextTrack) {
+      a.src = nextTrack.src;
+      a.currentTime = 0;
+      setCurrentIndex(nextIndex);
+      setCurrentTime(0);
+      setDuration(0);
+      if (wasPlaying) {
+        void a.play().catch(() => {
+          // ignore
+        });
+      } else {
+        a.pause();
+        setIsPlaying(false);
+      }
+    }
+  };
+
   useEffect(() => {
     void syncWindowPlaylistState(showPlaylist);
   }, [showPlaylist, syncWindowPlaylistState]);
@@ -410,6 +459,16 @@ export default function App() {
                 <span className="playlistName" title={t.name}>
                   {t.name}
                 </span>
+                <button
+                  type="button"
+                  className="playlistDelete"
+                  title="Delete track"
+                  aria-label={`Delete ${t.name}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    removeTrack(idx);
+                  }}
+                />
               </div>
             ))
           )}
