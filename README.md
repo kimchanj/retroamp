@@ -16,10 +16,13 @@ Winamp-inspired retro MP3 player built with Electron + Vite + React + TypeScript
 - Long filename ellipsis in playlist rows
 - Empty state (`No tracks`)
 - Play / Pause / Stop / Prev / Next
+- Repeat mode toggle (`RPT ALL` / `RPT 1` / `RPT OFF`)
 - Position and volume sliders
 - Current time / total duration display
 - Playlist panel fills bottom area on first launch
 - Playlist viewport shows up to 5 rows, then vertical scroll
+- Playlist panel collapse/expand with `PL` button
+- Frameless custom titlebar with close (`X`) button
 
 ## Tech Stack
 

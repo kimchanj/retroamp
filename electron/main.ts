@@ -18,12 +18,24 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
   : RENDERER_DIST;
 
 let win: Electron.BrowserWindow | null = null;
+const WINDOW_WIDTH = 520;
+const WINDOW_HEIGHT_EXPANDED = 460;
+const WINDOW_HEIGHT_COLLAPSED = 302;
+
+function getTargetWindow(sender: Electron.WebContents) {
+  return BrowserWindow.fromWebContents(sender) ?? win;
+}
 
 function createWindow() {
   win = new BrowserWindow({
-    width: 520,
-    height: 460,
-    resizable: false,
+    useContentSize: true,
+    width: WINDOW_WIDTH,
+    height: WINDOW_HEIGHT_EXPANDED,
+    minWidth: WINDOW_WIDTH,
+    maxWidth: WINDOW_WIDTH,
+    minHeight: WINDOW_HEIGHT_COLLAPSED,
+    maxHeight: WINDOW_HEIGHT_EXPANDED,
+    resizable: true,
     frame: false,
     backgroundColor: '#000000',
     autoHideMenuBar: true,
@@ -60,8 +72,6 @@ app.on('activate', () => {
 });
 
 app.whenReady().then(() => {
-  createWindow();
-
   ipcMain.handle('retroamp:open-audio-files', async () => {
     const owner = win ?? BrowserWindow.getFocusedWindow();
     const options: OpenDialogOptions = {
@@ -80,4 +90,41 @@ app.whenReady().then(() => {
     if (result.canceled) return [];
     return result.filePaths ?? [];
   });
+
+  ipcMain.handle('retroamp:window-minimize', (event) => {
+    const target = getTargetWindow(event.sender);
+    if (!target) return false;
+    target.minimize();
+    if (!target.isMinimized() && target.isVisible()) {
+      target.hide();
+    }
+    return target.isMinimized() || !target.isVisible();
+  });
+
+  ipcMain.handle('retroamp:window-close', (event) => {
+    const target = getTargetWindow(event.sender);
+    target?.close();
+    return true;
+  });
+
+  ipcMain.handle('retroamp:window-set-playlist-collapsed', (event, collapsed: boolean) => {
+    const target = getTargetWindow(event.sender);
+    if (!target) return false;
+    const nextHeight = collapsed ? WINDOW_HEIGHT_COLLAPSED : WINDOW_HEIGHT_EXPANDED;
+    const [x, y] = target.getPosition();
+    target.setBounds({ x, y, width: WINDOW_WIDTH, height: nextHeight }, true);
+    target.setContentSize(WINDOW_WIDTH, nextHeight, true);
+    target.center();
+    const [, currentH] = target.getSize();
+    return currentH === nextHeight;
+  });
+
+  ipcMain.handle('retroamp:window-hide', (event) => {
+    const target = getTargetWindow(event.sender);
+    if (!target) return false;
+    target.hide();
+    return !target.isVisible();
+  });
+
+  createWindow();
 });

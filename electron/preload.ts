@@ -27,4 +27,20 @@ contextBridge.exposeInMainWorld('retroamp', {
     const files = await ipcRenderer.invoke('retroamp:open-audio-files');
     return Array.isArray(files) ? files : [];
   },
+  minimizeWindow: async () => {
+    const result = await ipcRenderer.invoke('retroamp:window-minimize');
+    return Boolean(result);
+  },
+  closeWindow: async () => {
+    const result = await ipcRenderer.invoke('retroamp:window-close');
+    return Boolean(result);
+  },
+  setPlaylistCollapsed: async (collapsed: boolean) => {
+    const result = await ipcRenderer.invoke('retroamp:window-set-playlist-collapsed', collapsed);
+    return Boolean(result);
+  },
+  hideWindow: async () => {
+    const result = await ipcRenderer.invoke('retroamp:window-hide');
+    return Boolean(result);
+  },
 });

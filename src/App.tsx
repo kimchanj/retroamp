@@ -6,6 +6,7 @@ type Track = {
   name: string;
   src: string;
 };
+type RepeatMode = 'one' | 'all' | 'off';
 
 function basename(filePath: string) {
   const parts = filePath.split(/[/\\]/);
@@ -28,6 +29,8 @@ function fmtTime(sec: number) {
 }
 
 export default function App() {
+  const WINDOW_HEIGHT_EXPANDED = 460;
+  const WINDOW_HEIGHT_COLLAPSED = 302;
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [playlist, setPlaylist] = useState<Track[]>([]);
@@ -37,6 +40,48 @@ export default function App() {
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.8);
   const [showPlaylist, setShowPlaylist] = useState(true);
+  const [repeatMode, setRepeatMode] = useState<RepeatMode>('all');
+
+  const invokeMain = useCallback(async (channel: string, ...args: unknown[]) => {
+    try {
+      const ipc = window.ipcRenderer;
+      if (ipc?.invoke) return await ipc.invoke(channel, ...args);
+    } catch {
+      // ignore
+    }
+    return undefined;
+  }, []);
+
+  const closeWindow = useCallback(async () => {
+    try {
+      if (window.retroamp?.closeWindow) {
+        const closed = await window.retroamp.closeWindow();
+        if (closed) return;
+      }
+      await invokeMain('retroamp:window-close');
+      if (typeof window.close === 'function') window.close();
+    } catch {
+      // ignore
+    }
+  }, [invokeMain]);
+
+  const syncWindowPlaylistState = useCallback(
+    async (visible: boolean) => {
+      const collapsed = !visible;
+      try {
+        if (window.retroamp?.setPlaylistCollapsed) {
+          const ok = await window.retroamp.setPlaylistCollapsed(collapsed);
+          if (ok) return true;
+        }
+        const ok = await invokeMain('retroamp:window-set-playlist-collapsed', collapsed);
+        if (ok === true) return true;
+      } catch {
+        // ignore
+      }
+      return false;
+    },
+    [invokeMain],
+  );
 
   const currentTrack = useMemo(() => playlist[currentIndex] ?? null, [playlist, currentIndex]);
 
@@ -74,9 +119,17 @@ export default function App() {
     const onEnded = () => {
       if (playlist.length === 0) return;
       if (currentIndex < 0) return;
+
+      if (repeatMode === 'one') {
+        void selectTrack(currentIndex, { autoplay: true });
+        return;
+      }
+
       const next = currentIndex + 1;
       if (next < playlist.length) {
         void selectTrack(next, { autoplay: true });
+      } else if (repeatMode === 'all') {
+        void selectTrack(0, { autoplay: true });
       } else {
         setIsPlaying(false);
       }
@@ -95,7 +148,7 @@ export default function App() {
       a.removeEventListener('pause', onPause);
       a.removeEventListener('ended', onEnded);
     };
-  }, [playlist, currentIndex, volume, selectTrack]);
+  }, [playlist, currentIndex, volume, selectTrack, repeatMode]);
 
   const addTracks = (tracks: Track[]) => {
     if (tracks.length === 0) return;
@@ -192,13 +245,52 @@ export default function App() {
     if (a) a.volume = nextVolume;
   };
 
+  useEffect(() => {
+    void syncWindowPlaylistState(showPlaylist);
+  }, []);
+
+  const togglePlaylist = useCallback(() => {
+    setShowPlaylist((prev) => {
+      const next = !prev;
+      void (async () => {
+        const synced = await syncWindowPlaylistState(next);
+        if (!synced) {
+          try {
+            window.resizeTo(window.outerWidth, next ? WINDOW_HEIGHT_EXPANDED : WINDOW_HEIGHT_COLLAPSED);
+          } catch {
+            // ignore
+          }
+        }
+      })();
+      return next;
+    });
+  }, [syncWindowPlaylistState]);
+
+  const toggleRepeatMode = () => {
+    setRepeatMode((prev) => {
+      if (prev === 'all') return 'one';
+      if (prev === 'one') return 'off';
+      return 'all';
+    });
+  };
+
+  const repeatLabel = repeatMode === 'one' ? 'RPT 1' : repeatMode === 'all' ? 'RPT ALL' : 'RPT OFF';
+
   return (
     <div className="player">
       <div className="titlebar-drag">
         <div>RETROAMP</div>
         <div className="winbtns">
-          <div className="winbtn" />
-          <div className="winbtn" />
+          <button
+            className="winbtn"
+            title="Close"
+            aria-label="Close"
+            onClick={() => {
+              void closeWindow();
+            }}
+          >
+            X
+          </button>
         </div>
       </div>
 
@@ -247,21 +339,33 @@ export default function App() {
 
       <div className="controls">
         <button onClick={() => void prev()} title="Prev">
-          PREV
+          {'<<'}
         </button>
         <button onClick={() => (isPlaying ? pause() : void play())} title={isPlaying ? 'Pause' : 'Play'}>
-          {isPlaying ? 'PAUSE' : 'PLAY'}
+          {isPlaying ? '||' : '>'}
         </button>
         <button onClick={stop} title="Stop">
-          STOP
+          {'[]'}
         </button>
         <button onClick={() => void next()} title="Next">
-          NEXT
+          {'>>'}
         </button>
         <button onClick={() => void openFiles()} title="Open files">
-          OPEN
+          {'OPEN'}
         </button>
-        <button onClick={() => setShowPlaylist((v) => !v)} title="Playlist">
+        <button
+          className="repeatBtn"
+          onClick={toggleRepeatMode}
+          title="Repeat mode"
+          aria-pressed={repeatMode !== 'off'}
+        >
+          {repeatLabel}
+        </button>
+        <button
+          onClick={togglePlaylist}
+          title="Playlist"
+          aria-pressed={showPlaylist}
+        >
           PL
         </button>
       </div>
@@ -278,29 +382,29 @@ export default function App() {
         }}
       />
 
-      {showPlaylist && (
-        <div className="playlistPanel">
-          <div className="playlistBody">
-            {playlist.length === 0 ? (
-              <div className="playlistEmpty">No tracks</div>
-            ) : (
-              playlist.map((t, idx) => (
-                <div
-                  key={t.id}
-                  className={idx === currentIndex ? 'playlistItem active' : 'playlistItem'}
-                  onDoubleClick={() => void selectTrack(idx, { autoplay: true })}
-                >
-                  <span className="playlistIdx">{String(idx + 1).padStart(2, '0')}</span>
-                  <span className="playlistName" title={t.name}>
-                    {t.name}
-                  </span>
-                </div>
-              ))
-            )}
-          </div>
-          <div className="playlistHint">Double click a track to play</div>
+      <div className={showPlaylist ? 'playlistPanel' : 'playlistPanel collapsed'}>
+        <div className="playlistBody">
+          {playlist.length === 0 ? (
+            <div className="playlistEmpty">No tracks</div>
+          ) : (
+            playlist.map((t, idx) => (
+              <div
+                key={t.id}
+                className={idx === currentIndex ? 'playlistItem active' : 'playlistItem'}
+                onDoubleClick={() => void selectTrack(idx, { autoplay: true })}
+              >
+                <span className="playlistIdx">{String(idx + 1).padStart(2, '0')}</span>
+                <span className="playlistName" title={t.name}>
+                  {t.name}
+                </span>
+              </div>
+            ))
+          )}
         </div>
-      )}
+        <div className="playlistHint">
+          {showPlaylist ? 'Double click a track to play' : 'Playlist hidden - press PL to expand'}
+        </div>
+      </div>
 
       <audio ref={audioRef} />
     </div>
