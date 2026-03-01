@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import './App.css';
 
 type Track = {
@@ -29,8 +29,6 @@ function fmtTime(sec: number) {
 }
 
 export default function App() {
-  const WINDOW_HEIGHT_EXPANDED = 460;
-  const WINDOW_HEIGHT_COLLAPSED = 302;
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [playlist, setPlaylist] = useState<Track[]>([]);
@@ -39,8 +37,9 @@ export default function App() {
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [volume, setVolume] = useState(0.8);
-  const [showPlaylist, setShowPlaylist] = useState(true);
+  const [showPlaylist, setShowPlaylist] = useState(false);
   const [repeatMode, setRepeatMode] = useState<RepeatMode>('all');
+  const [pendingAutoplayIndex, setPendingAutoplayIndex] = useState<number | null>(null);
 
   const invokeMain = useCallback(async (channel: string, ...args: unknown[]) => {
     try {
@@ -75,6 +74,11 @@ export default function App() {
         }
         const ok = await invokeMain('retroamp:window-set-playlist-collapsed', collapsed);
         if (ok === true) return true;
+      } catch {
+        // ignore
+      }
+      try {
+        window.resizeTo(window.outerWidth, collapsed ? 302 : 460);
       } catch {
         // ignore
       }
@@ -150,13 +154,18 @@ export default function App() {
     };
   }, [playlist, currentIndex, volume, selectTrack, repeatMode]);
 
-  const addTracks = (tracks: Track[]) => {
+  const addTracks = (tracks: Track[], opts?: { autoplay?: boolean }) => {
     if (tracks.length === 0) return;
-    setPlaylist((prev) => [...prev, ...tracks]);
+    setPlaylist((prev) => {
+      if (opts?.autoplay) {
+        setPendingAutoplayIndex(prev.length);
+      }
+      return [...prev, ...tracks];
+    });
     setShowPlaylist(true);
   };
 
-  const addTracksFromPaths = (paths: string[]) => {
+  const addTracksFromPaths = (paths: string[], opts?: { autoplay?: boolean }) => {
     if (paths.length === 0) return;
     const timestamp = Date.now();
     const tracks: Track[] = paths.map((p, i) => ({
@@ -164,10 +173,10 @@ export default function App() {
       name: basename(p),
       src: toFileUrl(p),
     }));
-    addTracks(tracks);
+    addTracks(tracks, opts);
   };
 
-  const addTracksFromFiles = (files: FileList | null) => {
+  const addTracksFromFiles = (files: FileList | null, opts?: { autoplay?: boolean }) => {
     if (!files || files.length === 0) return;
     const timestamp = Date.now();
     const tracks: Track[] = Array.from(files).map((file, i) => ({
@@ -175,14 +184,21 @@ export default function App() {
       name: file.name,
       src: URL.createObjectURL(file),
     }));
-    addTracks(tracks);
+    addTracks(tracks, opts);
   };
+
+  useEffect(() => {
+    if (pendingAutoplayIndex == null) return;
+    if (!playlist[pendingAutoplayIndex]) return;
+    void selectTrack(pendingAutoplayIndex, { autoplay: true });
+    setPendingAutoplayIndex(null);
+  }, [pendingAutoplayIndex, playlist, selectTrack]);
 
   const openFiles = async () => {
     try {
       const paths = (await window.retroamp?.openAudioFiles?.()) ?? [];
       if (paths.length > 0) {
-        addTracksFromPaths(paths);
+        addTracksFromPaths(paths, { autoplay: true });
         return;
       }
     } catch {
@@ -247,24 +263,11 @@ export default function App() {
 
   useEffect(() => {
     void syncWindowPlaylistState(showPlaylist);
-  }, []);
+  }, [showPlaylist, syncWindowPlaylistState]);
 
   const togglePlaylist = useCallback(() => {
-    setShowPlaylist((prev) => {
-      const next = !prev;
-      void (async () => {
-        const synced = await syncWindowPlaylistState(next);
-        if (!synced) {
-          try {
-            window.resizeTo(window.outerWidth, next ? WINDOW_HEIGHT_EXPANDED : WINDOW_HEIGHT_COLLAPSED);
-          } catch {
-            // ignore
-          }
-        }
-      })();
-      return next;
-    });
-  }, [syncWindowPlaylistState]);
+    setShowPlaylist((prev) => !prev);
+  }, []);
 
   const toggleRepeatMode = () => {
     setRepeatMode((prev) => {
@@ -295,9 +298,19 @@ export default function App() {
       </div>
 
       <div className="mainRow">
-        <div className="visualizer" aria-hidden>
+        <div className={isPlaying ? 'visualizer playing' : 'visualizer'} aria-hidden>
           {Array.from({ length: 10 }).map((_, i) => (
-            <div key={i} className="bar" style={{ height: `${10 + ((i * 13) % 45)}px`, opacity: 0.25 }} />
+            <div
+              key={i}
+              className="bar"
+              style={
+                {
+                  '--bar-h': `${14 + ((i * 11) % 42)}px`,
+                  '--bar-d': `${0.45 + ((i % 4) * 0.12)}s`,
+                  '--bar-delay': `${(i % 5) * 0.08}s`,
+                } as CSSProperties
+              }
+            />
           ))}
         </div>
 
@@ -377,7 +390,7 @@ export default function App() {
         accept="audio/*"
         multiple
         onChange={(e) => {
-          addTracksFromFiles(e.target.files);
+          addTracksFromFiles(e.target.files, { autoplay: true });
           e.currentTarget.value = '';
         }}
       />
